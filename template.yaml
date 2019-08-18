@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Parameters:
+  # Primary Centralized Logging S3 Solution Stack Set
+  StackUpdate:
+    Description: Primary Centralized Loging StackSet to update
+    Type: String
+    Default: AWS-Landing-Zone-CentralizedLoggingS3Primary
+  SNSTopicArn:
+    Description: SNS Topic to Send New Account Information
+    Type: String
+    Default: "arn:aws:sns:us-east-1:315375983207:account_lists"
+  SNSMsgJSON:
+    Description: SNS Massage to Send
+    Type: String
+    Default: '{"policyNames":[{"type":"kms","name":"secretsmanager","keyarn":"arn:aws:kms:us-east-1:278833423079:key/1a5fda48-6bda-4a56-9c60-22ccb0fb8348"},{"type":"s3","name":"ss-cf-templates"},{"type":"s3","name":"ss-cf-templates"},{"type":"s3","name":"ss-terraform-state"},{"type":"secrets","name":"artifactory-docker-user"}],"accountids":[],"accounts":[]}'
+
+
+#278833423079-us-east-1-code
+
+Resources:
+  # IAM Roles and Policies
+  ReadOrgWriteSSMRole:
+    Type:                          AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          Effect:                Allow
+          Principal:
+            Service:
+              - lambda.amazonaws.com
+          Action:                'sts:AssumeRole'
+      Path:                        /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName:                ReadOrganizationWriteSSM
+          PolicyDocument:
+            Statement:
+              - Effect:                Allow
+                Action:
+                  - SNS:Publish
+                Resource:              "*"
+              - Effect:                Allow
+                Action:
+                  - cloudformation:DescribeStackSet
+                  - cloudformation:UpdateStackSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ListChangeSets
+                  - cloudformation:DescribeStacks
+                Resource:              "*"
+              - Effect:                Allow
+                Action:
+                  - organizations:ListAccounts
+                Resource:              "*"
+              - Effect:                Allow
+                Action:
+                  - 'ssm:GetParameter*'
+                  - 'ssm:PutParameter'
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/org/member/centralloggings3/accounts'
+  UpdateAccountsInSSM:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: new_account_notifications.lambda_handler
+      FunctionName: new_account_notifications
+      Runtime: python3.6
+      Timeout: 360
+      CodeUri:
+         Bucket: 278833423079-us-east-1-code
+         Key: new_account_notifications.zip
+      Environment:
+        Variables:
+          StackSettoUpdate: !Ref "StackUpdate"
+          SNStopicArn: !Ref "SNSTopicArn"
+          SNSmsgJ: !Ref "SNSMsgJSON"
+      Events:
+        NewOrgAccountEvent:
+          Type: CloudWatchEvent
+          Properties:
+            Pattern:
+              detail:
+                eventSource:
+                  - organizations.amazonaws.com
+                eventName:
+                  - CreateAccount
+              source:
+                - "aws.organizations"
+              detail-type:
+                - "AWS API Call via CloudTrail"
+      Policies:
+        - AWSLambdaExecute # Managed Policy
+        - Version: '2012-10-17' # Policy Document
+          Statement:
+            - Effect:                Allow
+              Action:
+                - SNS:Publish
+              Resource:              "*"
+            - Effect:                Allow
+              Action:
+                - cloudformation:DescribeStackSet
+                - cloudformation:UpdateStackSet
+                - cloudformation:DescribeChangeSet
+                - cloudformation:ListChangeSets
+                - cloudformation:DescribeStacks
+              Resource:              "*"
+            - Effect:                Allow
+              Action:
+                - organizations:ListAccounts
+              Resource:              "*"
+            - Effect:                Allow
+              Action:
+                - 'ssm:GetParameter*'
+                - 'ssm:PutParameter'
+              Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/org/member/centralloggings3/accounts'
+
+#  # Run lambda to set Accounts in SSM
+#  SetAccounts:
+#    DependsOn:
+#      - ReadOrgWriteSSMRole
+#    Type: Custom::SetAccounts
+#    Properties:
+#      ServiceToken: !GetAtt "UpdateAccountsInSSM.Arn"
+
