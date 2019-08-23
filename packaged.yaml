@@ -1,18 +1,77 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Parameters:
   SNSMsgJSON:
-    Default: '{"policyNames":[{"type":"kms","name":"secretsmanager","keyarn":"arn:aws:kms:us-east-1:278833423079:key/1a5fda48-6bda-4a56-9c60-22ccb0fb8348"},{"type":"s3","name":"ss-cf-templates"},{"type":"s3","name":"ss-cf-templates"},{"type":"s3","name":"ss-terraform-state"},{"type":"secrets","name":"artifactory-docker-user"}],"accountids":[],"accounts":[]}'
+    Default: '{"policyNames":[{"type":"s3","region":"us-east-1","name":"ss-cf-templates"}],"accountids":[]}'
     Description: SNS Massage to Send
-    Type: String
-  SNSTopicArn:
-    Default: arn:aws:sns:us-east-1:315375983207:account_lists
-    Description: SNS Topic to Send New Account Information
     Type: String
   StackUpdate:
     Default: AWS-Landing-Zone-CentralizedLoggingS3Primary
-    Description: Primary Centralized Loging StackSet to update
+    Description: New Account Notification StackSet
     Type: String
 Resources:
+  NewAccountNotification:
+    Properties:
+      CodeUri: s3://397173662143-us-east-1-code/9b48599619bf2851134d657667469166
+      Description: When a new account is created it will send a json message to an
+        sns topic.
+      Environment:
+        Variables:
+          SNSMessageTemplate:
+            Ref: SNSMsgJSON
+          SNStopicArn:
+            Ref: NewAccountNotificationSNSTopic
+          StackSettoUpdate:
+            Ref: StackUpdate
+      Events:
+        NewOrgAccountEvent:
+          Properties:
+            Pattern:
+              detail:
+                eventName:
+                - CreateAccount
+                eventSource:
+                - organizations.amazonaws.com
+              detail-type:
+              - AWS API Call via CloudTrail
+              source:
+              - aws.organizations
+          Type: CloudWatchEvent
+      FunctionName: new_account_notification
+      Handler: new_account_notification.lambda_handler
+      Policies:
+      - AWSLambdaExecute
+      - Statement:
+        - Action:
+          - SNS:Publish
+          Effect: Allow
+          Resource: '*'
+        - Action:
+          - cloudformation:DescribeStackSet
+          - cloudformation:UpdateStackSet
+          - cloudformation:DescribeChangeSet
+          - cloudformation:ListChangeSets
+          - cloudformation:DescribeStacks
+          Effect: Allow
+          Resource: '*'
+        - Action:
+          - organizations:ListAccounts
+          Effect: Allow
+          Resource: '*'
+        - Action:
+          - ssm:GetParameter*
+          - ssm:PutParameter
+          Effect: Allow
+          Resource:
+            Fn::Sub: arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/org/member/accounts
+        Version: '2012-10-17'
+      Runtime: python3.7
+      Timeout: 360
+    Type: AWS::Serverless::Function
+  NewAccountNotificationSNSTopic:
+    Properties:
+      DisplayName: NewAccountNotification
+      TopicName: account_lists
+    Type: AWS::SNS::Topic
   ReadOrgWriteSSMRole:
     Properties:
       AssumeRolePolicyDocument:
@@ -49,63 +108,7 @@ Resources:
             - ssm:PutParameter
             Effect: Allow
             Resource:
-              Fn::Sub: arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/org/member/centralloggings3/accounts
+              Fn::Sub: arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/org/member/accounts
         PolicyName: ReadOrganizationWriteSSM
     Type: AWS::IAM::Role
-  UpdateAccountsInSSM:
-    Properties:
-      CodeUri: s3://363723026716-us-east-1-code/ca8584df7432fa7af97329c55946bbb8
-      Environment:
-        Variables:
-          SNSmsgJ:
-            Ref: SNSMsgJSON
-          SNStopicArn:
-            Ref: SNSTopicArn
-          StackSettoUpdate:
-            Ref: StackUpdate
-      Events:
-        NewOrgAccountEvent:
-          Properties:
-            Pattern:
-              detail:
-                eventName:
-                - CreateAccount
-                eventSource:
-                - organizations.amazonaws.com
-              detail-type:
-              - AWS API Call via CloudTrail
-              source:
-              - aws.organizations
-          Type: CloudWatchEvent
-      FunctionName: new_account_notifications
-      Handler: new_account_notifications.lambda_handler
-      Policies:
-      - AWSLambdaExecute
-      - Statement:
-        - Action:
-          - SNS:Publish
-          Effect: Allow
-          Resource: '*'
-        - Action:
-          - cloudformation:DescribeStackSet
-          - cloudformation:UpdateStackSet
-          - cloudformation:DescribeChangeSet
-          - cloudformation:ListChangeSets
-          - cloudformation:DescribeStacks
-          Effect: Allow
-          Resource: '*'
-        - Action:
-          - organizations:ListAccounts
-          Effect: Allow
-          Resource: '*'
-        - Action:
-          - ssm:GetParameter*
-          - ssm:PutParameter
-          Effect: Allow
-          Resource:
-            Fn::Sub: arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/org/member/centralloggings3/accounts
-        Version: '2012-10-17'
-      Runtime: python3.6
-      Timeout: 360
-    Type: AWS::Serverless::Function
 Transform: AWS::Serverless-2016-10-31

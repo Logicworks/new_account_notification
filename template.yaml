@@ -1,24 +1,23 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: 'AWS::Serverless-2016-10-31'
 Parameters:
-  # Primary Centralized Logging S3 Solution Stack Set
+  # Primary New Account Notification S3 Solution Stack Set
   StackUpdate:
-    Description: Primary Centralized Loging StackSet to update
+    Description: New Account Notification StackSet
     Type: String
     Default: AWS-Landing-Zone-CentralizedLoggingS3Primary
-  SNSTopicArn:
-    Description: SNS Topic to Send New Account Information
-    Type: String
-    Default: "arn:aws:sns:us-east-1:315375983207:account_lists"
   SNSMsgJSON:
     Description: SNS Massage to Send
     Type: String
-    Default: '{"policyNames":[{"type":"kms","name":"secretsmanager","keyarn":"arn:aws:kms:us-east-1:278833423079:key/1a5fda48-6bda-4a56-9c60-22ccb0fb8348"},{"type":"s3","name":"ss-cf-templates"},{"type":"s3","name":"ss-cf-templates"},{"type":"s3","name":"ss-terraform-state"},{"type":"secrets","name":"artifactory-docker-user"}],"accountids":[],"accounts":[]}'
-
-
-#278833423079-us-east-1-code
+    Default: '{"policyNames":[{"type":"s3","region":"us-east-1","name":"cf-templates"}],"accountids":[]}'
 
 Resources:
+  # SNS Topic
+  NewAccountNotificationSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: NewAccountNotification
+      TopicName: account_lists
   # IAM Roles and Policies
   ReadOrgWriteSSMRole:
     Type:                          AWS::IAM::Role
@@ -57,22 +56,23 @@ Resources:
                 Action:
                   - 'ssm:GetParameter*'
                   - 'ssm:PutParameter'
-                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/org/member/centralloggings3/accounts'
-  UpdateAccountsInSSM:
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/org/member/accounts'
+  NewAccountNotification:
     Type: 'AWS::Serverless::Function'
     Properties:
-      Handler: new_account_notifications.lambda_handler
-      FunctionName: new_account_notifications
-      Runtime: python3.6
+      Description: When a new account is created it will send a json message to an sns topic.
+      Handler: new_account_notification.lambda_handler
+      FunctionName: new_account_notification
+      Runtime: python3.7
       Timeout: 360
       CodeUri:
-         Bucket: 278833423079-us-east-1-code
-         Key: new_account_notifications.zip
+         Bucket: !Sub "${AWS::AccountId}-${AWS::Region}-code"
+         Key: 'new_account_notification.zip'
       Environment:
         Variables:
           StackSettoUpdate: !Ref "StackUpdate"
-          SNStopicArn: !Ref "SNSTopicArn"
-          SNSmsgJ: !Ref "SNSMsgJSON"
+          SNStopicArn: !Ref NewAccountNotificationSNSTopic
+          SNSMessageTemplate: !Ref "SNSMsgJSON"
       Events:
         NewOrgAccountEvent:
           Type: CloudWatchEvent
@@ -111,13 +111,4 @@ Resources:
               Action:
                 - 'ssm:GetParameter*'
                 - 'ssm:PutParameter'
-              Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/org/member/centralloggings3/accounts'
-
-#  # Run lambda to set Accounts in SSM
-#  SetAccounts:
-#    DependsOn:
-#      - ReadOrgWriteSSMRole
-#    Type: Custom::SetAccounts
-#    Properties:
-#      ServiceToken: !GetAtt "UpdateAccountsInSSM.Arn"
-
+              Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/org/member/accounts'
